@@ -1,0 +1,19 @@
+name: dwm
+services:
+  debug:
+    build:
+      context: .
+      dockerfile: Dockerfile.arch
+      platforms:
+        - "linux/amd64"
+    image: dwm:gdb
+    container_name: dwm-debug
+    expose:
+      - "2345/tcp"
+    ports:
+      - "127.0.0.1:2345:2345"
+    volumes:
+      - ./dwm:/home/debugger/.dwm
+      - ./st:/home/debugger/.st
+      - ./picom:/home/debugger/.config/picom
+      - /tmp/.X11-unix:/tmp/.X11-unix

@@ -1,0 +1,36 @@
+FROM archlinux:base-devel AS base
+
+RUN echo -e 'Server = https://mirrors.aliyun.com/archlinux/$repo/os/$arch' > /etc/pacman.d/mirrorlist && \
+	echo -e 'Server = https://mirrors.ustc.edu.cn/archlinux/$repo/os/$arch' > /etc/pacman.d/mirrors && \
+	echo -e '[multilib]' >> /etc/pacman.conf && \
+	echo -e 'Include = /etc/pacman.d/mirrorlist' >> /etc/pacman.conf && \
+	echo -e '[archlinuxcn]' >> /etc/pacman.conf && \
+	echo -e 'Server = https://repo.archlinuxcn.org/$arch' >> /etc/pacman.conf && \
+	pacman -Syy --noconfirm && \
+	pacman-key --init && \
+	pacman-key --lsign-key "farseerfc@archlinux.org" && \
+	pacman -S --noconfirm archlinuxcn-keyring && \
+	pacman -Scc --noconfirm
+
+RUN pacman -S --noconfirm yay && \
+	groupadd sudo && \
+    useradd -m -G sudo -s /bin/bash debugger && \
+    echo 'debugger:debugger' | chpasswd && \
+    echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+	pacman -Scc --noconfirm
+
+USER debugger
+wORKDIR /home/debugger
+
+RUN yay -Syy --noconfirm && \
+yay -S --noconfirm xorg xorg-xinit feh vim gdb ttf-nerd-fonts-symbols  ttf-victor-mono-nerd && \
+yay -Scc --noconfirm
+
+
+COPY picom-animations-1788__2023.02.13-1-x86_64.pkg.tar.zst /home/debugger/
+
+RUN sudo pacman -U --noconfirm /home/debugger/picom-animations-1788__2023.02.13-1-x86_64.pkg.tar.zst && rm -f /home/debugger/picom-animations-1788__2023.02.13-1-x86_64.pkg.tar.zst
+
+ADD --chmod=+x entrypoint.sh /
+
+ENTRYPOINT /entrypoint.sh
