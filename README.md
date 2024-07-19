@@ -4,7 +4,7 @@
 Xephyr -ac -noreset -screen 1523x825 :99 &
 ```
 
-# after
+# and
 
 ```
 docker compose up --detach

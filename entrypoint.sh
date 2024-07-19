@@ -12,9 +12,9 @@ feh --bg-fill /home/debugger/.dwm/wallpaper01.png >> /dev/null 2>&1 &
 
 (
 while true; do
-	[[ $(pgrep -x 'picom') ]] || picom --experimental-backends --config /home/debugger/.config/picom/picom.conf >> /dev/null 2>&1
+	[[ $(pgrep -x 'picom') ]] || picom --config /home/debugger/.config/picom/picom.conf >> /dev/null 2>&1
 	sleep 3;
 done &
 )
 
-gdbserver :2345 dwm
+$@

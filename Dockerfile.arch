@@ -20,16 +20,16 @@ RUN pacman -S --noconfirm yay && \
 	pacman -Scc --noconfirm
 
 USER debugger
-wORKDIR /home/debugger
+WORKDIR /home/debugger
 
 RUN yay -Syy --noconfirm && \
-yay -S --noconfirm xorg xorg-xinit feh vim gdb ttf-nerd-fonts-symbols  ttf-victor-mono-nerd && \
+yay -S --noconfirm xorg xorg-xinit feh vim gdb gcc ttf-nerd-fonts-symbols ttf-victor-mono-nerd picom-simpleanims-git && \
 yay -Scc --noconfirm
 
 
-COPY picom-animations-1788__2023.02.13-1-x86_64.pkg.tar.zst /home/debugger/
-
-RUN sudo pacman -U --noconfirm /home/debugger/picom-animations-1788__2023.02.13-1-x86_64.pkg.tar.zst && rm -f /home/debugger/picom-animations-1788__2023.02.13-1-x86_64.pkg.tar.zst
+# COPY picom-simpleanims-git-1854__2023.04.13-1-x86_64.pkg.tar.zst /home/debugger/
+ 
+# RUN sudo pacman -U --noconfirm /home/debugger/picom-simpleanims-git-1854__2023.04.13-1-x86_64.pkg.tar.zst && rm -f /home/debugger/picom-simpleanims-git-1854__2023.04.13-1-x86_64.pkg.tar.zst
 
 ADD --chmod=+x entrypoint.sh /
 

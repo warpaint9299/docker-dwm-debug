@@ -1,4 +1,4 @@
-/* Se LICENSE file for copyright and license details.
+/* See LICENSE file for copyright and license details.
  *
  * dynamic window manager is designed like any other X client as well. It is
  * driven through handling X events. In contrast to other X clients, a window
@@ -162,6 +162,7 @@ typedef struct
     void (*arrange)(Monitor *);
 } Layout;
 
+typedef struct Pertag Pertag;
 struct Monitor {
     char ltsymbol[16];
     float mfact;
@@ -184,6 +185,7 @@ struct Monitor {
     Monitor *next;
     Window barwin;
     const Layout *lt[3];
+    Pertag *pertag;
 };
 
 typedef struct
@@ -368,6 +370,15 @@ static Colormap cmap;
 /* configuration, allows nested code to access above variables */
 #include "config.h"
 #include <time.h>
+
+struct Pertag {
+    unsigned int curtag, prevtag;              /* current and previous tag */
+    int nmasters[LENGTH(tags) + 1];            /* number of windows in master area */
+    float mfacts[LENGTH(tags) + 1];            /* mfacts per tag */
+    unsigned int sellts[LENGTH(tags) + 1];     /* selected layouts */
+    const Layout *ltidxs[LENGTH(tags) + 1][2]; /* matrix of tags and layouts indexes  */
+};
+
 /* compile-time check if all tags fit into an unsigned int bit array. */
 struct NumTags {
     char limitexceeded[LENGTH(tags) > 31 ? -1 : 1];
@@ -821,6 +832,7 @@ Monitor *
 createmon(void)
 {
     Monitor *m;
+    int i;
 
     m = ecalloc(1, sizeof(Monitor));
     m->tagset[0] = m->tagset[1] = 1;
@@ -833,6 +845,21 @@ createmon(void)
     m->lt[0] = &layouts[0];
     m->lt[1] = &layouts[1 % LENGTH(layouts)];
     strncpy(m->ltsymbol, layouts[0].symbol, sizeof m->ltsymbol);
+    if (!(m->pertag = (Pertag *)calloc(1, sizeof(Pertag))))
+        die("fatal: could not malloc() %u bytes\n", sizeof(Pertag));
+    m->pertag->curtag = m->pertag->prevtag = 1;
+    for (i = 0; i <= LENGTH(tags); i++) {
+        /* init nmaster */
+        m->pertag->nmasters[i] = m->nmaster;
+
+        /* init mfacts */
+        m->pertag->mfacts[i] = m->mfact;
+
+        /* init layouts */
+        m->pertag->ltidxs[i][0] = m->lt[0];
+        m->pertag->ltidxs[i][1] = m->lt[1];
+        m->pertag->sellts[i] = m->sellt;
+    }
     return m;
 }
 
@@ -1080,6 +1107,7 @@ focusmon(const Arg *arg)
     if ((m = dirtomon(arg->i)) == selmon)
         return;
     unfocus(selmon->sel, 0);
+    XWarpPointer(dpy, None, m->barwin, 0, 0, 0, 0, m->mw / 2, m->mh / 2);
     selmon = m;
     focus(NULL);
     if (selmon->sel && !ispanel(selmon->sel) && !isnotifyd(selmon->sel))
@@ -1099,47 +1127,49 @@ focusstackhid(const Arg *arg)
 }
 
 int focussed_panel = 0; // helper for focusstack, avoids loops when panel is the only client
+
 void
-focusstack(int inc, int hid)
+focusstack(int inc, int vis)
 {
     Client *c = NULL, *i;
-    // if no client selected AND exclude hidden client; if client selected but fullscreened
-    if ((!selmon->sel && !hid) || (selmon->sel && selmon->sel->isfullscreen && lockfullscreen))
+
+    // if no client selected AND exclude hiden client; if client selected but fullscreened
+    if ((!selmon->sel && !vis) || (selmon->sel && selmon->sel->isfullscreen && lockfullscreen))
         return;
+
     if (!selmon->clients)
         return;
+
     if (inc > 0) {
         if (selmon->sel)
-            for (c = selmon->sel->next;
-                 c && (!ISVISIBLE(c) || (!hid && HIDDEN(c)));
-                 c = c->next)
+            for (c = selmon->sel->next; c && (!ISVISIBLE(c) || (!vis && HIDDEN(c))); c = c->next)
                 ;
         if (!c)
-            for (c = selmon->clients;
-                 c && (!ISVISIBLE(c) || (!hid && HIDDEN(c)));
-                 c = c->next)
+            for (c = selmon->clients; c && (!ISVISIBLE(c) || (!vis && HIDDEN(c))); c = c->next)
                 ;
     } else {
         if (selmon->sel) {
             for (i = selmon->clients; i != selmon->sel; i = i->next)
-                if (ISVISIBLE(i) && !(!hid && HIDDEN(i)))
+                if (!ispanel(i) && ISVISIBLE(i) && !(!vis && HIDDEN(i)))
                     c = i;
         } else
             c = selmon->clients;
         if (!c)
             for (; i; i = i->next)
-                if (ISVISIBLE(i) && !(!hid && HIDDEN(i)))
+                if (!ispanel(i) && ISVISIBLE(i) && !(!vis && HIDDEN(i)))
                     c = i;
     }
+
     if (c) {
         focus(c);
         restack(selmon);
+        XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w / 2, c->h / 2);
         if (HIDDEN(c)) {
             showwin(c);
             c->mon->hidsel = 1;
         }
-        // XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w / 2, c->h / 2);
     }
+
     // skipping the panel when switching focus:
     if (ispanel(c) && focussed_panel == 0) {
         focussed_panel = 1;
@@ -1272,6 +1302,8 @@ isnotifyd(Client *c)
 void
 hide(const Arg *arg)
 {
+    if (!selmon->sel)
+        return;
     if (ispanel(selmon->sel))
         return;
     hidewin(selmon->sel);
@@ -1317,7 +1349,7 @@ hidewin(Client *c)
 void
 incnmaster(const Arg *arg)
 {
-    selmon->nmaster = MAX(selmon->nmaster + arg->i, 0);
+    selmon->nmaster = selmon->pertag->nmasters[selmon->pertag->curtag] = MAX(selmon->nmaster + arg->i, 0);
     arrange(selmon);
 }
 
@@ -1546,11 +1578,55 @@ movemouse(const Arg *arg)
                     ny = selmon->wy;
                 else if (abs((selmon->wy + selmon->wh) - (ny + HEIGHT(c))) < snap)
                     ny = selmon->wy + selmon->wh - HEIGHT(c);
-                if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
-                    && (abs(nx - c->x) > snap || abs(ny - c->y) > snap))
-                    togglefloating(NULL);
                 if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
                     resize(c, nx, ny, c->w, c->h, 1);
+                else if (selmon->lt[selmon->sellt]->arrange || !c->isfloating) {
+                    if ((m = recttomon(ev.xmotion.x_root, ev.xmotion.y_root, 1, 1)) != selmon) {
+                        sendmon(c, m);
+                        selmon = m;
+                        focus(NULL);
+                    }
+
+                    Client *cc = c->mon->clients;
+                    while (1) {
+                        if (cc == 0) break;
+                        if (
+                            cc != c && !cc->isfloating && ISVISIBLE(cc) && ev.xmotion.x_root > cc->x && ev.xmotion.x_root < cc->x + cc->w && ev.xmotion.y_root > cc->y && ev.xmotion.y_root < cc->y + cc->h)
+                            break;
+
+                        cc = cc->next;
+                    }
+
+                    if (cc) {
+                        Client *cl1, *cl2, ocl1;
+
+                        if (!selmon->lt[selmon->sellt]->arrange) return;
+
+                        cl1 = c;
+                        cl2 = cc;
+                        ocl1 = *cl1;
+                        strcpy(cl1->name, cl2->name);
+                        cl1->win = cl2->win;
+                        cl1->x = cl2->x;
+                        cl1->y = cl2->y;
+                        cl1->w = cl2->w;
+                        cl1->h = cl2->h;
+
+                        cl2->win = ocl1.win;
+                        strcpy(cl2->name, ocl1.name);
+                        cl2->x = ocl1.x;
+                        cl2->y = ocl1.y;
+                        cl2->w = ocl1.w;
+                        cl2->h = ocl1.h;
+
+                        selmon->sel = cl2;
+
+                        c = cc;
+                        focus(c);
+
+                        arrange(cl1->mon);
+                    }
+                }
                 break;
         }
     } while (ev.type != ButtonRelease);
@@ -2020,6 +2096,13 @@ sendmon(Client *c, Monitor *m)
 {
     if (c->mon == m)
         return;
+
+    if (!c)
+        return;
+
+    if (ispanel(c))
+        return;
+
     unfocus(c, 1);
     detach(c);
     detachstack(c);
@@ -2123,10 +2206,13 @@ setgaps(const Arg *arg)
 void
 setlayout(const Arg *arg)
 {
-    if (!arg || !arg->v || arg->v != selmon->lt[selmon->sellt])
-        selmon->sellt ^= 1;
+    if (!arg || !arg->v || arg->v != selmon->lt[selmon->sellt]) {
+        selmon->pertag->sellts[selmon->pertag->curtag] ^= 1;
+        selmon->sellt = selmon->pertag->sellts[selmon->pertag->curtag];
+    }
     if (arg && arg->v)
-        selmon->lt[selmon->sellt] = (Layout *)arg->v;
+        selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt] = (Layout *)arg->v;
+    selmon->lt[selmon->sellt] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt];
     strncpy(selmon->ltsymbol, selmon->lt[selmon->sellt]->symbol, sizeof selmon->ltsymbol);
     if (selmon->sel)
         arrange(selmon);
@@ -2145,7 +2231,7 @@ setmfact(const Arg *arg)
     f = arg->f < 1.0 ? arg->f + selmon->mfact : arg->f - 1.0;
     if (f < 0.05 || f > 0.95)
         return;
-    selmon->mfact = f;
+    selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag] = f;
     arrange(selmon);
 }
 
@@ -2327,7 +2413,7 @@ tag(const Arg *arg)
 void
 tagmon(const Arg *arg)
 {
-    if (!selmon->sel || !mons->next)
+    if (!selmon->sel || !mons->next || !entagmon)
         return;
     sendmon(selmon->sel, dirtomon(arg->i));
 }
@@ -2443,9 +2529,27 @@ void
 toggleview(const Arg *arg)
 {
     unsigned int newtagset = selmon->tagset[selmon->seltags] ^ (arg->ui & TAGMASK);
-
+    int i;
     if (newtagset) {
+        if (newtagset == ~0) {
+            selmon->pertag->prevtag = selmon->pertag->curtag;
+            selmon->pertag->curtag = 0;
+        }
+        /* test if the user did not select the same tag */
+        if (!(newtagset & 1 << (selmon->pertag->curtag - 1))) {
+            selmon->pertag->prevtag = selmon->pertag->curtag;
+            for (i = 0; !(newtagset & 1 << i); i++)
+                ;
+            selmon->pertag->curtag = i + 1;
+        }
         selmon->tagset[selmon->seltags] = newtagset;
+
+        /* apply settings for this view */
+        selmon->nmaster = selmon->pertag->nmasters[selmon->pertag->curtag];
+        selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag];
+        selmon->sellt = selmon->pertag->sellts[selmon->pertag->curtag];
+        selmon->lt[selmon->sellt] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt];
+        selmon->lt[selmon->sellt ^ 1] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt ^ 1];
         focus(NULL);
         arrange(selmon);
     }
@@ -2535,7 +2639,7 @@ updatebarpos(Monitor *m)
 {
     m->wy = m->my;
     m->wh = m->mh;
-    if (m->num == 0 && m->showbar) {
+    if (!m->num && m->showbar) { // only show bar on first monitor
         m->wh = m->wh - vertpad - bh;
         m->by = m->topbar ? m->wy : m->wy + m->wh + vertpad;
         m->wy = m->topbar ? m->wy + bh + vp : m->wy;
@@ -2766,11 +2870,32 @@ updatewmhints(Client *c)
 void
 view(const Arg *arg)
 {
+    int i;
+    unsigned int tmptag;
+
     if ((arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
         return;
     selmon->seltags ^= 1; /* toggle sel tagset */
-    if (arg->ui & TAGMASK)
+    if (arg->ui & TAGMASK) {
+        selmon->pertag->prevtag = selmon->pertag->curtag;
         selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
+        if (arg->ui == ~0)
+            selmon->pertag->curtag = 0;
+        else {
+            for (i = 0; !(arg->ui & 1 << i); i++)
+                ;
+            selmon->pertag->curtag = i + 1;
+        }
+    } else {
+        tmptag = selmon->pertag->prevtag;
+        selmon->pertag->prevtag = selmon->pertag->curtag;
+        selmon->pertag->curtag = tmptag;
+    }
+    selmon->nmaster = selmon->pertag->nmasters[selmon->pertag->curtag];
+    selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag];
+    selmon->sellt = selmon->pertag->sellts[selmon->pertag->curtag];
+    selmon->lt[selmon->sellt] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt];
+    selmon->lt[selmon->sellt ^ 1] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt ^ 1];
     focus(NULL);
     arrange(selmon);
 }

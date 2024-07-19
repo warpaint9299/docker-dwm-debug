@@ -17,3 +17,5 @@ services:
       - ./st:/home/debugger/.st
       - ./picom:/home/debugger/.config/picom
       - /tmp/.X11-unix:/tmp/.X11-unix
+    entrypoint: ["/entrypoint.sh", "gdbserver :2345 dwm"]
+    # entrypoint: ["/entrypoint.sh", "dwm"]
